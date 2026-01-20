@@ -271,6 +271,52 @@ async def list_tests_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     await update.message.reply_text(message, parse_mode='Markdown')
 
+async def delete_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("Bu buyruq faqat adminlarga ruxsat etilgan.")
+        return
+
+    db: Session = get_db_session(context)
+    tests = db.query(Test.name).all()
+
+    if not tests:
+        await update.message.reply_text("Hech qanday test mavjud emas.")
+        return
+
+    buttons = [
+        [InlineKeyboardButton(name[0], callback_data=f"delete::{name[0]}")]
+        for name in tests
+    ]
+
+    keyboard = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("Qaysi testni o‘chirmoqchisiz?", reply_markup=keyboard)
+
+async def handle_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin test o‘chirishni tasdiqlaganda ishlaydi."""
+    query = update.callback_query
+    await query.answer()
+
+    if not query.data.startswith("delete::"):
+        return
+    test_name = query.data.split("delete::")[1]
+
+    db: Session = get_db_session(context)
+    if not db:
+        await query.edit_message_text("DB ulanishida xatolik yuz berdi.")
+        return
+
+    from db_manager import delete_test_by_name
+    success = delete_test_by_name(db, test_name)
+
+    if success:
+        await query.edit_message_text(
+            f"🗑 Test **{test_name}** muvaffaqiyatli o‘chirildi.",
+            parse_mode='Markdown'
+        )
+    else:
+        await query.edit_message_text(f"⚠️ Test topilmadi: {test_name}")
+
+
 def format_leaderboard_message(title, data, is_global=False):
     """Reytingni tayyorlash."""
     message = f"🏆 **{title}** 🏆\n\n"
@@ -329,6 +375,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Assalomu alaykum! Men quiz generator botman.\n\n"
         "**Adminlar uchun (ID: {ADMIN_ID}):**\n"
         "/addtest - Yangi test matnini yuboring.\n"
+        "/delete -Mavjud testlarni o'chiradi.\n"
         "/listtests - Mavjud testlarni ko'rish.\n\n"
         "**Foydalanuvchilar uchun:**\n"
         "/takequiz - Quiz olish.\n"
@@ -347,7 +394,9 @@ def main() -> None:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("delete", delete_test_command))
     application.add_handler(CommandHandler("addtest", add_test_command)) 
+    application.add_handler(CallbackQueryHandler(handle_delete_callback, pattern="^delete::"))
     application.add_handler(CommandHandler("listtests", list_tests_command))
     application.add_handler(CommandHandler("takequiz", take_quiz_command))
     application.add_handler(CommandHandler("leaderboard", show_leaderboard))
@@ -355,6 +404,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(user_id=ADMIN_ID), handle_admin_message))
     
     application.add_handler(CallbackQueryHandler(handle_quiz_callback))
+
 
 
     print("Bot ishga tushirildi va DB sozlandi...")
